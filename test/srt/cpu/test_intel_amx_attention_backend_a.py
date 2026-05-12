@@ -3,7 +3,6 @@ Usage:
 python3 -m unittest test_intel_amx_attention_backend.TestIntelAMXAttnBackend.test_latency_default_model
 """
 
-import os
 import unittest
 from types import SimpleNamespace
 
@@ -20,7 +19,6 @@ from sglang.test.test_utils import (
     popen_launch_server,
 )
 
-os.environ.pop("SGLANG_CPU_OMP_THREADS_BIND", None)
 
 class TestIntelAMXAttnBackend(CustomTestCase):
 
