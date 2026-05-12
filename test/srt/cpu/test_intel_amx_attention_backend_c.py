@@ -28,6 +28,8 @@ class TestIntelAMXAttnBackendQuant(CustomTestCase):
         min_throughput=100,
     )
     def test_latency_w8a8_default_model(self):
+        import os
+        os.environ.pop("SGLANG_CPU_OMP_THREADS_BIND", None)
         return DEFAULT_MODEL_NAME_FOR_TEST_W8A8
 
     @intel_amx_benchmark(
