@@ -56,7 +56,7 @@ class TestCPUGraph(CustomTestCase):
                 "--attention-backend",
                 "intel_amx",
                 "--mem-fraction-static",
-                "0.05",
+                "0.5",
                 "--disable-radix",
                 "--trust-remote-code",
                 "--disable-overlap-schedule",
