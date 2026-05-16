@@ -316,6 +316,7 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
         )
 
         self.num_draft_tokens = model_runner.server_args.speculative_num_draft_tokens
+        self.cuda_graph_custom_mask = None
 
     def _calc_padded_blocks(self, max_seq_len: int) -> int:
         """
@@ -423,7 +424,17 @@ class TRTLLMMLABackend(FlashInferMLAAttnBackend):
                 device=self.device,
             )
 
+        if self.num_draft_tokens and not self.skip_prefill:
+            self.cuda_graph_custom_mask = torch.zeros(
+                max_num_tokens * (self.max_context_len + self.num_draft_tokens),
+                dtype=torch.bool,
+                device=self.device,
+            )
+
         super().init_cuda_graph_state(max_bs, max_num_tokens, kv_indices_buf)
+
+    def get_verify_buffers_to_fill_after_draft(self):
+        return [self.cuda_graph_custom_mask, None]
 
     def init_forward_metadata_capture_cuda_graph(
         self,
