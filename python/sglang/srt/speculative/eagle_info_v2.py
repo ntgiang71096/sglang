@@ -167,11 +167,15 @@ class EagleDraftInputV2Mixin:
             bs,
         )
 
-        # Defer CPU sync: schedule_stream barrier + lazy .item() at the
-        # actual CPU read site (filter_batch, attention metadata) means we
-        # don't need to eagerly D2H seq_lens here.
-        batch.seq_lens_cpu = None
-        batch.seq_lens_sum = None
+        # NOTE: eager D2H — many attention backends (NSA, flashmla,
+        # trtllm_mha, flashinfer_mla, flashattention, deepseek_v4)
+        # subscript `seq_lens_cpu[:bs]` in their replay metadata prep
+        # without None-handling. Until those are made tolerant of None,
+        # keep materializing here. The Optional type infrastructure on
+        # ScheduleBatch / ForwardData / ForwardBatch remains for future
+        # defer-CPU work; spec V2 path just doesn't trigger it yet.
+        batch.seq_lens_cpu = batch.seq_lens.cpu()
+        batch.seq_lens_sum = batch.seq_lens_cpu.sum().item()
 
     def prepare_for_v2_draft(
         self: EagleDraftInput,
