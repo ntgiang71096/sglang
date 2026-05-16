@@ -167,9 +167,11 @@ class EagleDraftInputV2Mixin:
             bs,
         )
 
-        # FIXME(lsyin): make this sync optional
-        batch.seq_lens_cpu = batch.seq_lens.cpu()
-        batch.seq_lens_sum = batch.seq_lens_cpu.sum().item()
+        # Defer CPU sync: schedule_stream barrier + lazy .item() at the
+        # actual CPU read site (filter_batch, attention metadata) means we
+        # don't need to eagerly D2H seq_lens here.
+        batch.seq_lens_cpu = None
+        batch.seq_lens_sum = None
 
     def prepare_for_v2_draft(
         self: EagleDraftInput,
@@ -223,16 +225,30 @@ class EagleDraftInputV2Mixin:
         draft_model_runner: Any,
         cuda_graph_runner: Any,
     ):
-        seq_lens_cpu_ = batch.seq_lens_cpu
-        extend_num_tokens = len(batch.seq_lens) * num_draft_tokens
+        bs = len(batch.seq_lens)
+        extend_num_tokens = bs * num_draft_tokens
+        gpu_only = batch.seq_lens_cpu is None
 
         batch.spec_info = self
         batch.input_ids = predict
-        batch.seq_lens = batch.seq_lens + num_draft_tokens
-        batch.seq_lens_cpu = batch.seq_lens_cpu + num_draft_tokens
-        batch.seq_lens_sum += extend_num_tokens
-        batch.extend_lens = [num_draft_tokens for _ in range(len(batch.seq_lens))]
-        batch.prefix_lens = seq_lens_cpu_.tolist()
+        if gpu_only:
+            # CPU sync was deferred upstream; keep extend_lens / prefix_lens
+            # as GPU tensors and let downstream attention metadata read
+            # them without an extra D2H.
+            prefix_lens_gpu = batch.seq_lens.to(torch.int32)
+            batch.seq_lens = batch.seq_lens + num_draft_tokens
+            batch.extend_lens = torch.full(
+                (bs,), num_draft_tokens, dtype=torch.int32, device=batch.seq_lens.device
+            )
+            batch.prefix_lens = prefix_lens_gpu
+        else:
+            seq_lens_cpu_ = batch.seq_lens_cpu
+            batch.seq_lens = batch.seq_lens + num_draft_tokens
+            batch.seq_lens_cpu = batch.seq_lens_cpu + num_draft_tokens
+            batch.extend_lens = [num_draft_tokens for _ in range(bs)]
+            batch.prefix_lens = seq_lens_cpu_.tolist()
+        if batch.seq_lens_sum is not None:
+            batch.seq_lens_sum += extend_num_tokens
         batch.extend_num_tokens = extend_num_tokens
         capture_mode = (
             CaptureHiddenMode.NULL

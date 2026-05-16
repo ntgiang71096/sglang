@@ -301,7 +301,7 @@ class ForwardData:
     input_ids: torch.Tensor
     req_pool_indices: torch.Tensor
     seq_lens: torch.Tensor
-    seq_lens_sum: int
+    seq_lens_sum: Optional[int]
     out_cache_loc: torch.Tensor
 
     seq_lens_cpu: Optional[torch.Tensor] = None
@@ -402,8 +402,8 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
     # The indices of output tokens in the token_to_kv_pool
     out_cache_loc: torch.Tensor
 
-    # The sum of all sequence lengths
-    seq_lens_sum: int
+    # The sum of all sequence lengths (None when CPU sync is deferred)
+    seq_lens_sum: Optional[int]
 
     # The original sequence length without being chunked. Qwen-1M related.
     orig_seq_lens: Optional[torch.Tensor] = None
@@ -706,14 +706,19 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             if ret.positions is None:
                 ret.positions = clamp_position(batch.seq_lens)
         else:
-            assert isinstance(extend_seq_lens, list)
-            assert isinstance(extend_prefix_lens, list)
-            ret.extend_seq_lens = torch.tensor(extend_seq_lens, dtype=torch.int32).to(
-                device, non_blocking=True
-            )
-            ret.extend_prefix_lens = torch.tensor(
-                extend_prefix_lens, dtype=torch.int32
-            ).to(device, non_blocking=True)
+            if isinstance(extend_seq_lens, torch.Tensor):
+                # gpu_only path (spec V2 defer-CPU): seq lens already on GPU.
+                ret.extend_seq_lens = extend_seq_lens
+                ret.extend_prefix_lens = extend_prefix_lens
+            else:
+                assert isinstance(extend_seq_lens, list)
+                assert isinstance(extend_prefix_lens, list)
+                ret.extend_seq_lens = torch.tensor(
+                    extend_seq_lens, dtype=torch.int32
+                ).to(device, non_blocking=True)
+                ret.extend_prefix_lens = torch.tensor(
+                    extend_prefix_lens, dtype=torch.int32
+                ).to(device, non_blocking=True)
             ret.extend_num_tokens = batch.extend_num_tokens
             positions, ret.extend_start_loc = compute_position(
                 model_runner.server_args.attention_backend,
@@ -723,8 +728,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             )
             if ret.positions is None:
                 ret.positions = positions
-            ret.extend_prefix_lens_cpu = extend_prefix_lens
-            ret.extend_seq_lens_cpu = extend_seq_lens
+            if isinstance(extend_prefix_lens, list):
+                ret.extend_prefix_lens_cpu = extend_prefix_lens
+                ret.extend_seq_lens_cpu = extend_seq_lens
             ret.extend_logprob_start_lens_cpu = extend_logprob_start_lens
 
         if model_runner.use_ngram_embedding:
@@ -927,14 +933,18 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             if ret.positions is None:
                 ret.positions = clamp_position(forward_data.seq_lens)
         else:
-            assert isinstance(extend_seq_lens, list)
-            assert isinstance(extend_prefix_lens, list)
-            ret.extend_seq_lens = torch.tensor(extend_seq_lens, dtype=torch.int32).to(
-                device, non_blocking=True
-            )
-            ret.extend_prefix_lens = torch.tensor(
-                extend_prefix_lens, dtype=torch.int32
-            ).to(device, non_blocking=True)
+            if isinstance(extend_seq_lens, torch.Tensor):
+                ret.extend_seq_lens = extend_seq_lens
+                ret.extend_prefix_lens = extend_prefix_lens
+            else:
+                assert isinstance(extend_seq_lens, list)
+                assert isinstance(extend_prefix_lens, list)
+                ret.extend_seq_lens = torch.tensor(
+                    extend_seq_lens, dtype=torch.int32
+                ).to(device, non_blocking=True)
+                ret.extend_prefix_lens = torch.tensor(
+                    extend_prefix_lens, dtype=torch.int32
+                ).to(device, non_blocking=True)
             ret.extend_num_tokens = forward_data.extend_num_tokens
             positions, ret.extend_start_loc = compute_position(
                 model_runner.server_args.attention_backend,
@@ -944,8 +954,9 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
             )
             if ret.positions is None:
                 ret.positions = positions
-            ret.extend_prefix_lens_cpu = extend_prefix_lens
-            ret.extend_seq_lens_cpu = extend_seq_lens
+            if isinstance(extend_prefix_lens, list):
+                ret.extend_prefix_lens_cpu = extend_prefix_lens
+                ret.extend_seq_lens_cpu = extend_seq_lens
             ret.extend_logprob_start_lens_cpu = extend_logprob_start_lens
 
         if model_runner.use_ngram_embedding:
@@ -1317,9 +1328,10 @@ class ForwardBatch(ForwardBatchDeepSeekMHAMixin):
         seq_len_fill_value = (
             model_runner.attn_backend.get_cuda_graph_seq_len_fill_value()
         )
-        self.seq_lens_sum = self.seq_lens_sum + seq_len_fill_value * (
-            bs - self.seq_lens.shape[0]
-        )
+        if self.seq_lens_sum is not None:
+            self.seq_lens_sum = self.seq_lens_sum + seq_len_fill_value * (
+                bs - self.seq_lens.shape[0]
+            )
         self.seq_lens = self._pad_tensor_to_size(
             self.seq_lens, bs, value=seq_len_fill_value
         )

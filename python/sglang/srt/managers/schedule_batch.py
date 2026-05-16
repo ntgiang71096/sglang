@@ -1412,8 +1412,8 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
     # For multimodal inputs
     multimodal_inputs: Optional[List] = None
 
-    # The sum of all sequence lengths
-    seq_lens_sum: int = None
+    # The sum of all sequence lengths (None when CPU sync is deferred)
+    seq_lens_sum: Optional[int] = None
     # The original sequence lengths, Qwen-1M related
     orig_seq_lens: torch.Tensor = None  # shape: [b], int32
 
@@ -2422,10 +2422,14 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             self.multimodal_inputs = [self.multimodal_inputs[i] for i in keep_indices]
         self.req_pool_indices = self.req_pool_indices[keep_indices_device]
         self.seq_lens = self.seq_lens[keep_indices_device]
-        self.seq_lens_cpu = self.seq_lens_cpu[keep_indices]
+        if self.seq_lens_cpu is not None:
+            self.seq_lens_cpu = self.seq_lens_cpu[keep_indices]
         self.orig_seq_lens = self.orig_seq_lens[keep_indices_device]
         self.out_cache_loc = None
-        self.seq_lens_sum = self.seq_lens.sum().item()
+        if self.seq_lens_sum is not None:
+            # Recompute only when caller had it; preserves None propagation
+            # when CPU sync was deferred (spec V2 path).
+            self.seq_lens_sum = self.seq_lens.sum().item()
 
         if self.output_ids is not None:
             self.output_ids = self.output_ids[keep_indices_device]
@@ -2470,10 +2474,17 @@ class ScheduleBatch(ScheduleBatchDisaggregationDecodeMixin):
             [self.req_pool_indices, other.req_pool_indices]
         )
         self.seq_lens = torch.cat([self.seq_lens, other.seq_lens])
-        self.seq_lens_cpu = torch.cat([self.seq_lens_cpu, other.seq_lens_cpu])
+        if self.seq_lens_cpu is not None and other.seq_lens_cpu is not None:
+            self.seq_lens_cpu = torch.cat([self.seq_lens_cpu, other.seq_lens_cpu])
+        else:
+            # One side deferred CPU; propagate None.
+            self.seq_lens_cpu = None
         self.orig_seq_lens = torch.cat([self.orig_seq_lens, other.orig_seq_lens])
         self.out_cache_loc = None
-        self.seq_lens_sum += other.seq_lens_sum
+        if self.seq_lens_sum is not None and other.seq_lens_sum is not None:
+            self.seq_lens_sum += other.seq_lens_sum
+        else:
+            self.seq_lens_sum = None
         if self.output_ids is not None:
             self.output_ids = torch.cat([self.output_ids, other.output_ids])
         self.mamba_track_indices = None
