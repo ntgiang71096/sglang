@@ -794,8 +794,6 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
             accept_index,
         ) = verify_input.sample(batch, logits_output)
         new_seq_lens = batch.seq_lens + accept_lens
-        verify_done = torch.get_device_module(self.device).Event()
-        verify_done.record()
 
         if not batch.forward_mode.is_idle():
             accept_tokens = predict[accept_index]
@@ -818,11 +816,10 @@ class MultiLayerEagleWorkerV2(BaseSpecWorker):
         # field anchors verify_forward_batch (and transitively the verify-time
         # GPU tensors like draft_token / out_cache_loc) so they survive the
         # imminent batch.input_ids rebind in prepare_for_extend_to_fill_draft_kvcache
-        # until the next iter's verify_done.synchronize() in filter_batch.
+        # while target verify is still in flight on forward_stream.
         next_draft_input = EagleDraftInput(
             bonus_tokens=bonus_tokens,
             new_seq_lens=new_seq_lens,
-            verify_done=verify_done,
             _keep_alive_for_verify_forward=verify_forward_batch,
         )
         return GenerationBatchResult(

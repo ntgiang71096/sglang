@@ -696,7 +696,6 @@ class EagleDraftInput(SpecInput, EagleDraftInputV2Mixin):
     # V2 overlap worker only
     future_indices: Optional[FutureIndices] = None
     new_seq_lens: Optional[torch.Tensor] = None
-    verify_done: Optional[torch.cuda.Event] = None
     # V2 reuses `EagleDraftInput` across phases (V1 has a separate
     # `EagleDraftExtendInput` for these). Set during V2's draft-extend.
     num_correct_drafts: Optional[torch.Tensor] = None
@@ -707,9 +706,7 @@ class EagleDraftInput(SpecInput, EagleDraftInputV2Mixin):
     # Without this, prepare_for_extend_to_fill_draft_kvcache rebinds
     # batch.input_ids = predict, dropping the only Python ref to draft_token
     # while target verify forward is still in flight on forward_stream;
-    # allocator can then recycle its memory and the kernel deadlocks/spins,
-    # so verify_done never fires and the next iter hangs in
-    # filter_batch -> maybe_wait_verify_done -> synchronize.
+    # allocator can then recycle its memory and corrupt in-flight verify work.
     # Pre-MWB-removal this was provided by ModelWorkerBatch's per-field copy
     # held in Scheduler.batch_record_buf for one full iter.
     _keep_alive_for_verify_forward: Optional[Any] = None
