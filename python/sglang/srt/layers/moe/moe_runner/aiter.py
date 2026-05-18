@@ -129,6 +129,8 @@ class AiterRunnerCore(MoeRunnerCore):
             extra["num_local_tokens"] = runner_input.num_local_tokens
         if runner_input.output_dtype is not None:
             extra["dtype"] = runner_input.output_dtype
+        if quant_info.gate_mode != "separated":
+            extra["gate_mode"] = quant_info.gate_mode
 
         output = fused_moe(
             hidden_states=runner_input.hidden_states,
@@ -148,7 +150,6 @@ class AiterRunnerCore(MoeRunnerCore):
             doweight_stage1=quant_info.doweight_stage1,
             hidden_pad=quant_info.hidden_pad,
             intermediate_pad=quant_info.intermediate_pad,
-            gate_mode=quant_info.gate_mode,
             **extra,
         )
         return AiterRunnerOutput(hidden_states=output)
